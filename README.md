@@ -55,3 +55,6 @@ streamlit run app.py
 - Do not commit secrets such as `.env`.
 - Keep `vectorstore/` if you want to deploy with a prebuilt FAISS index.
 
+## Dataset
+
+- https://huggingface.co/datasets/Sakonii/nepalitext-language-model-dataset
