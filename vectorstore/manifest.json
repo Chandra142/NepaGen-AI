@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "embedding_model": "intfloat/multilingual-e5-base",
+  "chunk_size": 500,
+  "chunk_overlap": 50,
+  "document_count": 2731,
+  "source_text_count": 2731,
+  "dataset_sha256": "ae7d37832b9ccb56f1c024042ee9cc42e65b17d3d1e4d8bdc4e7111847cf76aa",
+  "storage_format": "json-docstore"
+}

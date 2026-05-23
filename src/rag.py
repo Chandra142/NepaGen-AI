@@ -1,28 +1,19 @@
 from dotenv import load_dotenv
-import os
 from pathlib import Path
+import sys
 
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+from vectorstore_store import load_vectorstore
 
 # Load environment variables
 load_dotenv()
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-VECTORSTORE_DIR = BASE_DIR / "vectorstore"
-
-# Load embedding model
-embeddings = HuggingFaceEmbeddings(
-    model_name="intfloat/multilingual-e5-base"
-)
-
-# Load FAISS vector DB
-db = FAISS.load_local(
-    str(VECTORSTORE_DIR),
-    embeddings,
-    allow_dangerous_deserialization=True
-)
+db = load_vectorstore()
 
 retriever = db.as_retriever(
     search_kwargs={"k": 5}
