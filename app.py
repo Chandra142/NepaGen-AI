@@ -2,6 +2,7 @@ import streamlit as st
 from dotenv import load_dotenv
 import html as html_lib
 import json
+import re
 
 import streamlit.components.v1 as components
 
@@ -150,7 +151,7 @@ html, body {
 }
 
 .block-container {
-    max-width: 70vw;
+    max-width: min(72rem, 94vw);
     padding-top: clamp(1rem, 2.5vw, 2rem);
     padding-bottom: clamp(1rem, 2.5vw, 2rem);
     padding-left: clamp(0.75rem, 2vw, 2rem);
@@ -209,25 +210,75 @@ html, body {
     text-transform: uppercase;
 }
 
-        .assistant-copy {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
+.assistant-bubble {
     width: 100%;
     max-width: 100%;
-    padding: 1rem 1rem 1.1rem 1rem;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    padding: 1rem 1.05rem 0.95rem 1.05rem;
     border-radius: 1.125rem;
     border: 1px solid rgba(96, 165, 250, 0.22);
     background: linear-gradient(160deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.94));
     box-shadow: 0 0.85rem 2.3rem rgba(2, 6, 23, 0.28);
-    overflow: hidden;
-            text-decoration: none;
-            appearance: none;
-            -webkit-appearance: none;
+    animation: message-fade 0.35s ease;
+    box-sizing: border-box;
+}
 
-            cursor: pointer;
-            outline: none;
+.assistant-text {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    color: #f1f5f9;
+    font-size: clamp(0.95rem, 1.8vw, 1.05rem);
+    line-height: 1.75;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    box-sizing: border-box;
+}
+
+.assistant-copy-row {
+    width: 100%;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    margin-top: 0.35rem;
+    box-sizing: border-box;
+}
+
+.assistant-copy-btn {
+    width: 2rem;
+    height: 2rem;
+    min-width: 2rem;
+    min-height: 2rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.78), rgba(30, 41, 59, 0.82));
+    color: #dbeafe;
+    cursor: pointer;
+    transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+    box-shadow: 0 0.45rem 1rem rgba(2, 6, 23, 0.32);
+    font-size: 0.95rem;
+    line-height: 1;
+}
+
+.assistant-copy-btn:hover {
+    transform: scale(1.08);
+    background: linear-gradient(180deg, rgba(37, 99, 235, 0.38), rgba(124, 58, 237, 0.28));
+    border-color: rgba(96, 165, 250, 0.92);
+    color: #ffffff;
+    box-shadow: 0 0.75rem 1.6rem rgba(37, 99, 235, 0.3), 0 0 0 1px rgba(96, 165, 250, 0.2);
+}
+
+.assistant-copy-btn:active {
+    transform: scale(0.96);
+}
+
 .assistant-loading::before {
     content: "";
     position: absolute;
@@ -373,6 +424,19 @@ html, body {
     .assistant-loading {
         padding: 0.9rem;
     }
+
+    .assistant-bubble {
+        padding: 0.9rem 0.9rem 0.85rem 0.9rem;
+        border-radius: 1rem;
+    }
+
+    .assistant-copy-btn {
+        width: 1.9rem;
+        height: 1.9rem;
+        min-width: 1.9rem;
+        min-height: 1.9rem;
+        font-size: 0.92rem;
+    }
 }
 
 </style>
@@ -397,7 +461,13 @@ def normalize_query_text(query: str) -> str:
         query.lower()
         .strip()
         .replace("\\", "")
+        .replace("?", "")
     )
+
+
+def normalize_keyword_text(query: str) -> str:
+
+    return re.sub(r"[^\w\s\u0900-\u097F]", "", query).strip()
 
 
 def render_loading_indicator() -> str:
@@ -428,59 +498,10 @@ def render_assistant_message(message: dict) -> None:
         escaped_answer = html_lib.escape(answer)
         answer_json = json.dumps(answer)
 
-        bubble_html = """
-        <style>
-        .assistant-bubble {{
-            position: relative;
-            display: flex;
-            flex-direction: column;
-            width: 100%;
-            max-width: 100%;
-            min-height: fit-content;
-            height: auto;
-            padding: 1rem 2.9rem 1rem 1rem;
-            border: 1px solid rgba(96, 165, 250, 0.28);
-            border-radius: 1.125rem;
-            background: linear-gradient(160deg, rgba(30, 41, 59, 0.98) 0%, rgba(15, 23, 42, 0.98) 55%, rgba(17, 24, 39, 0.98) 100%);
-            box-shadow: 0 0.9rem 2.5rem rgba(2, 6, 23, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-            animation: message-fade 0.35s ease;
-            overflow: visible;
-        }}
-
-        .assistant-bubble:hover {{
-            transform: translateY(-1px);
-            border-color: rgba(96, 165, 250, 0.56);
-            box-shadow: 0 1rem 3rem rgba(37, 99, 235, 0.18), 0 1.2rem 3rem rgba(2, 6, 23, 0.46), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-        }}
-
-        .assistant-text {{
-            width: 100%;
-            max-width: 100%;
-            height: auto;
-            min-height: fit-content;
-            color: #f1f5f9;
-            font-size: clamp(0.95rem, 1.8vw, 1.05rem);
-            line-height: 1.75;
-            white-space: pre-wrap;
-            word-break: break-word;
-            overflow-wrap: break-word;
-            padding-right: 2.25rem;
-        }}
-
-        @media (max-width: 48rem) {{
-            .assistant-bubble {{
-                padding: 0.9rem 2.7rem 0.9rem 0.9rem;
-                border-radius: 1rem;
-            }}
-        }}
-        </style>
-
-        <div class="assistant-bubble">
-            <div class="assistant-text">{escaped_answer}</div>
-        </div>
-        """.format(answer_json=answer_json, escaped_answer=escaped_answer)
-
-        st.markdown(bubble_html, unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="assistant-bubble"><div class="assistant-text">{escaped_answer}</div></div>',
+            unsafe_allow_html=True,
+        )
 
         copy_html = """
         <style>
@@ -488,20 +509,22 @@ def render_assistant_message(message: dict) -> None:
             margin: 0;
             padding: 0;
             background: transparent;
-            overflow: hidden;
         }
 
         .copy-wrap {
             width: 100%;
             display: flex;
             justify-content: flex-end;
-            padding-top: 0.35rem;
+            padding-top: 0.1rem;
+            padding-right: 0.05rem;
             box-sizing: border-box;
         }
 
         .copy-btn {
-            width: 1.9rem;
-            height: 1.9rem;
+            width: 2rem;
+            height: 2rem;
+            min-width: 2rem;
+            min-height: 2rem;
             display: inline-flex;
             align-items: center;
             justify-content: center;
@@ -568,7 +591,7 @@ def render_assistant_message(message: dict) -> None:
         </script>
         """.replace("__ANSWER_TEXT__", answer_json)
 
-        components.html(copy_html, height=42, scrolling=False)
+        components.html(copy_html, height=58, scrolling=False)
 # =========================
 # SIDEBAR
 # =========================
@@ -658,13 +681,14 @@ if query:
         "ok": "ठिक छ 👍"
     }
 
+    normalized_lookup = normalize_keyword_text(normalized_query)
+
     # =========================
     # AI KEYWORDS
     # =========================
     ai_keywords = {
         "what is rag": "RAG stands for Retrieval-Augmented Generation.",
         "rag": "RAG stands for Retrieval-Augmented Generation.",
-        "what is ai": "AI means Artificial Intelligence.",
         "who are you": "म NepaGen AI हुँ ।"
     }
 
@@ -681,17 +705,17 @@ if query:
         # =========================
         # SMALL TALK RESPONSE
         # =========================
-        if normalized_query in small_talk:
+        if normalized_lookup in small_talk:
 
-            answer = small_talk[normalized_query]
+            answer = small_talk[normalized_lookup]
             context = ""
 
         # =========================
         # AI KEYWORD RESPONSE
         # =========================
-        elif normalized_query in ai_keywords:
+        elif normalized_lookup in ai_keywords:
 
-            answer = ai_keywords[normalized_query]
+            answer = ai_keywords[normalized_lookup]
             context = ""
 
         # =========================
