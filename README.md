@@ -54,3 +54,4 @@ streamlit run app.py
 - Keep `app.py` at the repository root for Streamlit Cloud.
 - Do not commit secrets such as `.env`.
 - Keep `vectorstore/` if you want to deploy with a prebuilt FAISS index.
+
