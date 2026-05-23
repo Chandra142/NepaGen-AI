@@ -1,21 +1,13 @@
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
+import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-VECTORSTORE_DIR = BASE_DIR / "vectorstore"
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
-# Load embedding model
-embeddings = HuggingFaceEmbeddings(
-    model_name="intfloat/multilingual-e5-base"
-)
+from vectorstore_store import load_vectorstore
 
-# Load FAISS vector DB
-db = FAISS.load_local(
-    str(VECTORSTORE_DIR),
-    embeddings,
-    allow_dangerous_deserialization=True
-)
+db = load_vectorstore()
 
 # Create retriever
 retriever = db.as_retriever(

@@ -2,21 +2,17 @@ import streamlit as st
 from dotenv import load_dotenv
 import html as html_lib
 import json
-from pathlib import Path
 
 import streamlit.components.v1 as components
 
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
+
+from vectorstore_store import load_vectorstore
 
 # =========================
 # LOAD ENV VARIABLES
 # =========================
 load_dotenv()
-
-BASE_DIR = Path(__file__).resolve().parent
-VECTORSTORE_DIR = BASE_DIR / "vectorstore"
 
 # =========================
 # PAGE CONFIG
@@ -583,19 +579,8 @@ def render_assistant_message(message: dict) -> None:
 # =========================
 @st.cache_resource
 def load_models():
-
-    # Embeddings
-    embeddings = HuggingFaceEmbeddings(
-        model_name="intfloat/multilingual-e5-base",
-        model_kwargs={"device": "cpu"}
-    )
-
     # Vector DB
-    db = FAISS.load_local(
-        str(VECTORSTORE_DIR),
-        embeddings,
-        allow_dangerous_deserialization=True
-    )
+    db = load_vectorstore()
 
     # Retriever
     retriever = db.as_retriever(
@@ -611,7 +596,12 @@ def load_models():
 
     return retriever, llm
 
-retriever, llm = load_models()
+try:
+    retriever, llm = load_models()
+except Exception as exc:
+    st.error("NepaGen AI could not load the FAISS vectorstore. Rebuild it with `python src/ingest.py` and redeploy.")
+    st.exception(exc)
+    st.stop()
 
 # =========================
 # CHAT HISTORY
