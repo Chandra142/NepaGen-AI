@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import faiss
+import faiss
 import pandas as pd
 from langchain_community.docstore.in_memory import InMemoryDocstore
 from langchain_community.vectorstores import FAISS
@@ -27,6 +28,9 @@ EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12
 VECTORSTORE_SCHEMA_VERSION = 2
 CHUNK_SIZE = 250
 CHUNK_OVERLAP = 64
+
+class VectorstoreCompatibilityError(RuntimeError):
+    pass
 MAX_SOURCE_TEXTS = 2000
 
 
@@ -49,6 +53,10 @@ def _empty_vectorstore(embeddings: HuggingFaceEmbeddings) -> FAISS:
     dimension = len(sample_vector)
     index = faiss.IndexFlatL2(dimension)
     return FAISS(embeddings, index, InMemoryDocstore({}), {})
+
+
+def _embedding_dimension(embeddings: HuggingFaceEmbeddings) -> int:
+    return len(embeddings.embed_query("vectorstore-dimension-probe"))
 
 
 @lru_cache(maxsize=1)
@@ -98,6 +106,14 @@ def _manifest_status(manifest: dict | None) -> str:
         return (
             f"embedding_model mismatch (found={manifest.get('embedding_model')}, "
             f"expected={EMBEDDING_MODEL_NAME})"
+        )
+
+    current_dimension = _embedding_dimension(make_embeddings())
+    stored_dimension = manifest.get("embedding_dimension")
+    if stored_dimension not in (None, current_dimension):
+        return (
+            f"embedding_dimension mismatch (found={stored_dimension}, "
+            f"expected={current_dimension})"
         )
 
     current_hash = _current_dataset_hash()
@@ -349,12 +365,27 @@ def load_vectorstore() -> FAISS:
     embedding_start = time.perf_counter()
     embeddings = make_embeddings()
     embedding_load_time = time.perf_counter() - embedding_start
+    embedding_dimension = _embedding_dimension(embeddings)
+    print("[startup] embedding dimension:", embedding_dimension)
 
     if _json_store_exists():
         try:
             vectorstore_start = time.perf_counter()
             db = _load_json_store(embeddings)
             vectorstore_load_time = time.perf_counter() - vectorstore_start
+
+            index_dimension = getattr(db.index, "d", None)
+            print("[startup] faiss index dimension:", index_dimension)
+            print("[startup] faiss index ntotal:", getattr(db.index, "ntotal", None))
+
+            if index_dimension != embedding_dimension:
+                print(
+                    "[startup] vectorstore dimension mismatch:",
+                    f"index_d={index_dimension}",
+                    f"embedding_d={embedding_dimension}",
+                )
+                print("[startup] falling back to empty in-memory FAISS store")
+                return _empty_vectorstore(embeddings)
 
             if _manifest_is_current(manifest):
                 print("[startup] manifest validation: current")
