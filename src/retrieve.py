@@ -11,14 +11,18 @@ db = load_vectorstore()
 
 # Create retriever
 retriever = db.as_retriever(
-    search_kwargs={"k": 3}
+    search_type="mmr",
+    search_kwargs={"k": 3, "fetch_k": 12}
 )
 
 while True:
 
     query = input("\nAsk Question: ")
 
-    docs = retriever.invoke(query)
+    try:
+        docs = retriever.get_relevant_documents(query)
+    except Exception:
+        docs = retriever.invoke(query)
 
     print("\nRetrieved Documents:\n")
 

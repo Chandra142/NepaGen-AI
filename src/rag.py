@@ -14,9 +14,9 @@ from vectorstore_store import load_vectorstore
 load_dotenv()
 
 db = load_vectorstore()
-
 retriever = db.as_retriever(
-    search_kwargs={"k": 5}
+    search_type="mmr",
+    search_kwargs={"k": 5, "fetch_k": 20}
 )
 
 # Load Groq LLM
@@ -31,7 +31,10 @@ while True:
     query = input("\nAsk Question: ")
 
     # Retrieve documents
-    docs = retriever.invoke(query)
+    try:
+        docs = retriever.get_relevant_documents(query)
+    except Exception:
+        docs = retriever.invoke(query)
 
     # Build context
     context = "\n\n".join(
