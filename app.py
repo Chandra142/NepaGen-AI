@@ -502,13 +502,25 @@ def render_composer() -> str | None:
     return None
 
 
+class _EmptyRetriever:
+    def get_relevant_documents(self, query):
+        return []
+
+    def invoke(self, query):
+        return []
+
+
 @st.cache_resource(show_spinner=False)
 def load_models():
     vectorstore_start = time.perf_counter()
     db = load_vectorstore()
     vectorstore_load_time = time.perf_counter() - vectorstore_start
 
-    retriever = db.as_retriever(search_type="mmr", search_kwargs={"k": 5, "fetch_k": 20})
+    if getattr(db.index, "ntotal", 0) > 0:
+        retriever = db.as_retriever(search_type="mmr", search_kwargs={"k": 5, "fetch_k": 20})
+    else:
+        print("[startup] empty vectorstore fallback active; using no-op retriever")
+        retriever = _EmptyRetriever()
 
     llm_start = time.perf_counter()
     llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0, max_tokens=200)
