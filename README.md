@@ -1,28 +1,44 @@
 # NepaGen AI
 
-NepaGen AI is a Streamlit-based Nepali RAG chatbot built with FAISS, LangChain, Groq, and HuggingFace embeddings.
+NepaGen AI is a premium Nepali Streamlit chat app powered by FAISS, LangChain, Groq, and HuggingFace embeddings.
+
+Live app: [rag142.streamlit.app](https://rag142.streamlit.app/)
+
+Dataset: [Sakonii/nepalitext-language-model-dataset](https://huggingface.co/datasets/Sakonii/nepalitext-language-model-dataset)
+
+## Overview
+
+NepaGen AI provides grounded RAG responses over a Nepali dataset with a polished chat experience, persistent conversation history, and responsive UI behavior on Streamlit Cloud.
+
+## Features
+
+- Nepali-language RAG chat
+- FAISS-backed retrieval
+- Groq-powered generation
+- MMR retrieval for better context selection
+- Persistent chat history
+- Premium dark UI with responsive layout
 
 ## Project Structure
 
 ```text
-NepaGen-AI/
+.
 ├── app.py
 ├── requirements.txt
 ├── README.md
-├── .gitignore
-├── .env
 ├── data/
 │   └── nepali_dataset.csv
 ├── vectorstore/
 │   ├── index.faiss
-│   └── index.pkl
+│   ├── docstore.json
+│   └── manifest.json
 └── src/
     ├── ingest.py
     ├── rag.py
     └── retrieve.py
 ```
 
-## Setup
+## Local Setup
 
 1. Create and activate a Python virtual environment.
 2. Install dependencies:
@@ -31,30 +47,37 @@ NepaGen-AI/
 pip install -r requirements.txt
 ```
 
-3. Add your Groq API key to `.env`:
+3. Add your Groq API key in a local `.env` file:
 
 ```env
 GROQ_API_KEY=your_groq_api_key
 ```
 
-## Run the App
+## Run Locally
 
 ```bash
 streamlit run app.py
 ```
 
-## Data and Vector Store
+## Rebuild the Vectorstore
 
-- `data/nepali_dataset.csv` contains the dataset used for ingestion.
-- `vectorstore/` contains the FAISS index used by the chatbot.
-- If you need to rebuild the index, run `src/ingest.py` from the project root.
+If you update the dataset or embedding model, rebuild the FAISS store from the project root:
+
+```bash
+python src/ingest.py
+```
+
+This regenerates the vectorstore files in `vectorstore/`.
 
 ## Deployment Notes
 
 - Keep `app.py` at the repository root for Streamlit Cloud.
+- Commit the `vectorstore/` directory if you want deployment to use the prebuilt index.
 - Do not commit secrets such as `.env`.
-- Keep `vectorstore/` if you want to deploy with a prebuilt FAISS index.
+- If retrieval fails after an embedding change, rebuild the vectorstore before redeploying.
 
-## Dataset
+## Data Source
 
-- https://huggingface.co/datasets/Sakonii/nepalitext-language-model-dataset
+The app uses the Nepali text dataset from Hugging Face:
+
+- [Sakonii/nepalitext-language-model-dataset](https://huggingface.co/datasets/Sakonii/nepalitext-language-model-dataset)
