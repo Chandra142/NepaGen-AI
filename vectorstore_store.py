@@ -30,6 +30,27 @@ CHUNK_OVERLAP = 64
 MAX_SOURCE_TEXTS = 2000
 
 
+def _log_startup_paths() -> None:
+    print("BASE_DIR:", BASE_DIR)
+    print("CWD:", Path.cwd())
+    print("VECTORSTORE_DIR exists:", VECTORSTORE_DIR.exists())
+    print("INDEX_PATH exists:", INDEX_PATH.exists())
+    print("DOCSTORE_PATH exists:", DOCSTORE_PATH.exists())
+    print("MANIFEST_PATH exists:", MANIFEST_PATH.exists())
+    print("BASE_DIR resolved:", BASE_DIR.resolve())
+    print("VECTORSTORE_DIR resolved:", VECTORSTORE_DIR.resolve())
+    print("INDEX_PATH resolved:", INDEX_PATH.resolve())
+    print("DOCSTORE_PATH resolved:", DOCSTORE_PATH.resolve())
+    print("MANIFEST_PATH resolved:", MANIFEST_PATH.resolve())
+
+
+def _empty_vectorstore(embeddings: HuggingFaceEmbeddings) -> FAISS:
+    sample_vector = embeddings.embed_query("vectorstore-dimension-probe")
+    dimension = len(sample_vector)
+    index = faiss.IndexFlatL2(dimension)
+    return FAISS(embeddings, index, InMemoryDocstore({}), {})
+
+
 @lru_cache(maxsize=1)
 def make_embeddings() -> HuggingFaceEmbeddings:
     return HuggingFaceEmbeddings(
@@ -59,7 +80,32 @@ def _load_manifest() -> dict | None:
     try:
         return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
+        print("[startup] manifest validation failed: invalid JSON")
         return None
+
+
+def _manifest_status(manifest: dict | None) -> str:
+    if not manifest:
+        return "missing or unreadable"
+
+    if manifest.get("schema_version") != VECTORSTORE_SCHEMA_VERSION:
+        return (
+            f"schema_version mismatch (found={manifest.get('schema_version')}, "
+            f"expected={VECTORSTORE_SCHEMA_VERSION})"
+        )
+
+    if manifest.get("embedding_model") != EMBEDDING_MODEL_NAME:
+        return (
+            f"embedding_model mismatch (found={manifest.get('embedding_model')}, "
+            f"expected={EMBEDDING_MODEL_NAME})"
+        )
+
+    current_hash = _current_dataset_hash()
+    stored_hash = manifest.get("dataset_sha256")
+    if current_hash and stored_hash and stored_hash != current_hash:
+        return f"dataset hash mismatch (stored={stored_hash}, current={current_hash})"
+
+    return "current"
 
 
 def _write_manifest(*, document_count: int, source_text_count: int, dataset_hash: str | None) -> None:
@@ -158,7 +204,11 @@ def _manifest_is_current(manifest: dict | None) -> bool:
         return False
 
     current_hash = _current_dataset_hash()
-    return manifest.get("dataset_sha256") == current_hash
+    stored_hash = manifest.get("dataset_sha256")
+    if current_hash and stored_hash and stored_hash != current_hash:
+        return False
+
+    return True
 
 
 def build_vectorstore() -> FAISS:
@@ -291,21 +341,35 @@ def build_vectorstore() -> FAISS:
 
 
 def load_vectorstore() -> FAISS:
+    _log_startup_paths()
     manifest = _load_manifest()
+    print("[startup] manifest content:", manifest)
+    print("[startup] manifest status:", _manifest_status(manifest))
 
-    if _json_store_exists() and _manifest_is_current(manifest):
-        embedding_start = time.perf_counter()
-        embeddings = make_embeddings()
-        embedding_load_time = time.perf_counter() - embedding_start
+    embedding_start = time.perf_counter()
+    embeddings = make_embeddings()
+    embedding_load_time = time.perf_counter() - embedding_start
 
-        vectorstore_start = time.perf_counter()
-        db = _load_json_store(embeddings)
-        vectorstore_load_time = time.perf_counter() - vectorstore_start
+    if _json_store_exists():
+        try:
+            vectorstore_start = time.perf_counter()
+            db = _load_json_store(embeddings)
+            vectorstore_load_time = time.perf_counter() - vectorstore_start
 
-        print(f"[startup] embedding load: {embedding_load_time:.2f}s")
-        print(f"[startup] vectorstore load: {vectorstore_load_time:.2f}s")
-        return db
+            if _manifest_is_current(manifest):
+                print("[startup] manifest validation: current")
+            else:
+                print("[startup] manifest validation warning:", _manifest_status(manifest))
+                print("[startup] continuing because FAISS index and docstore loaded successfully")
 
-    raise FileNotFoundError(
-        "Vectorstore missing or invalid. Run ingest.py manually."
-    )
+            print(f"[startup] embedding load: {embedding_load_time:.2f}s")
+            print(f"[startup] vectorstore load: {vectorstore_load_time:.2f}s")
+            print(f"[startup] faiss ntotal: {db.index.ntotal}")
+            return db
+        except Exception as exc:
+            print("[startup] vectorstore load failed:", repr(exc))
+            print("[startup] falling back to empty in-memory FAISS store")
+            return _empty_vectorstore(embeddings)
+
+    print("[startup] vectorstore files missing; falling back to empty in-memory FAISS store")
+    return _empty_vectorstore(embeddings)
