@@ -38,7 +38,7 @@ if __name__ == "__main__":
         time.sleep(0.05)
 
     # Build vectorstore
-    db = build_vectorstore()
+    db = build_vectorstore(clean_existing=True)
 
     total_chunks = len(db.index_to_docstore_id)
 

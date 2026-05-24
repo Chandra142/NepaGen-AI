@@ -10,13 +10,34 @@ if str(BASE_DIR) not in sys.path:
 
 from vectorstore_store import load_vectorstore
 
+
+class SafeRetriever:
+    def __init__(self, retriever):
+        self._retriever = retriever
+
+    def get_relevant_documents(self, query):
+        try:
+            return self._retriever.get_relevant_documents(query)
+        except Exception as exc:
+            print("[rag] retriever.get_relevant_documents failed:", repr(exc))
+            return []
+
+    def invoke(self, query):
+        try:
+            return self._retriever.invoke(query)
+        except Exception as exc:
+            print("[rag] retriever.invoke failed:", repr(exc))
+            return []
+
 # Load environment variables
 load_dotenv()
 
 db = load_vectorstore()
-retriever = db.as_retriever(
-    search_type="mmr",
-    search_kwargs={"k": 5, "fetch_k": 20}
+retriever = SafeRetriever(
+    db.as_retriever(
+        search_type="mmr",
+        search_kwargs={"k": 5, "fetch_k": 20},
+    )
 )
 
 # Load Groq LLM
@@ -31,10 +52,7 @@ while True:
     query = input("\nAsk Question: ")
 
     # Retrieve documents
-    try:
-        docs = retriever.get_relevant_documents(query)
-    except Exception:
-        docs = retriever.invoke(query)
+    docs = retriever.get_relevant_documents(query)
 
     # Build context
     context = "\n\n".join(

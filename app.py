@@ -3,6 +3,7 @@ import json
 import re
 import time
 STARTUP_START = time.perf_counter()
+APP_REVISION = "2026-05-24-safe-retrieval"
 
 
 import streamlit as st
@@ -10,7 +11,7 @@ import streamlit.components.v1 as components
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 
-from vectorstore_store import load_vectorstore
+from vectorstore_store import VectorstoreCompatibilityError, load_vectorstore
 
 load_dotenv()
 
@@ -510,6 +511,29 @@ class _EmptyRetriever:
         return []
 
 
+class _SafeRetriever:
+    def __init__(self, retriever_obj):
+        self._retriever = retriever_obj
+
+    def get_relevant_documents(self, query):
+        try:
+            return self._retriever.get_relevant_documents(query)
+        except Exception as first_error:
+            print("[startup] retriever.get_relevant_documents failed:", repr(first_error))
+            return []
+
+    def invoke(self, query):
+        try:
+            return self._retriever.invoke(query)
+        except Exception as first_error:
+            print("[startup] retriever.invoke failed:", repr(first_error))
+            return []
+
+
+def safe_retrieve_documents(retriever_obj, query: str):
+    return retriever_obj.get_relevant_documents(query)
+
+
 @st.cache_resource(show_spinner=False)
 def load_models():
     vectorstore_start = time.perf_counter()
@@ -517,7 +541,7 @@ def load_models():
     vectorstore_load_time = time.perf_counter() - vectorstore_start
 
     if getattr(db.index, "ntotal", 0) > 0:
-        retriever = db.as_retriever(search_type="mmr", search_kwargs={"k": 5, "fetch_k": 20})
+        retriever = _SafeRetriever(db.as_retriever(search_type="mmr", search_kwargs={"k": 5, "fetch_k": 20}))
     else:
         print("[startup] empty vectorstore fallback active; using no-op retriever")
         retriever = _EmptyRetriever()
@@ -536,12 +560,17 @@ def load_models():
 
 try:
     retriever, llm = load_models()
+except VectorstoreCompatibilityError as exc:
+    st.error(str(exc))
+    st.warning("Please rebuild the vectorstore with the current embedding model and redeploy.")
+    st.stop()
 except Exception as exc:
     st.error("NepaGen AI could not load the FAISS vectorstore. Rebuild it with `python src/ingest.py` and redeploy.")
     st.exception(exc)
     st.stop()
 
 print(f"[startup] total startup time: {time.perf_counter() - STARTUP_START:.2f}s")
+print(f"[startup] app revision: {APP_REVISION}")
 
 
 init_chat_state()
@@ -600,10 +629,7 @@ if query:
         elif normalized_lookup in ai_keywords:
             answer = ai_keywords[normalized_lookup]
         else:
-            try:
-                docs = retriever.get_relevant_documents(query)
-            except Exception:
-                docs = retriever.invoke(query)
+            docs = safe_retrieve_documents(retriever, query)
 
             def _is_noise_text(t: str) -> bool:
                 low = t.lower()
