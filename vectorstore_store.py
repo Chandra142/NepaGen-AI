@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import unicodedata
+import time
+from functools import lru_cache
 from pathlib import Path
 
 import faiss
@@ -19,13 +23,14 @@ INDEX_PATH = VECTORSTORE_DIR / "index.faiss"
 DOCSTORE_PATH = VECTORSTORE_DIR / "docstore.json"
 MANIFEST_PATH = VECTORSTORE_DIR / "manifest.json"
 
-EMBEDDING_MODEL_NAME = "intfloat/multilingual-e5-base"
-VECTORSTORE_SCHEMA_VERSION = 1
-CHUNK_SIZE = 500
-CHUNK_OVERLAP = 50
+EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+VECTORSTORE_SCHEMA_VERSION = 2
+CHUNK_SIZE = 250
+CHUNK_OVERLAP = 64
 MAX_SOURCE_TEXTS = 2000
 
 
+@lru_cache(maxsize=1)
 def make_embeddings() -> HuggingFaceEmbeddings:
     return HuggingFaceEmbeddings(
         model_name=EMBEDDING_MODEL_NAME,
@@ -138,10 +143,6 @@ def _load_json_store(embeddings: HuggingFaceEmbeddings) -> FAISS:
     )
 
 
-def _legacy_store_exists() -> bool:
-    return (VECTORSTORE_DIR / "index.pkl").exists() and INDEX_PATH.exists()
-
-
 def _json_store_exists() -> bool:
     return DOCSTORE_PATH.exists() and INDEX_PATH.exists() and MANIFEST_PATH.exists()
 
@@ -168,11 +169,21 @@ def build_vectorstore() -> FAISS:
     if "text" not in dataframe.columns:
         raise KeyError("Expected a 'text' column in nepali_dataset.csv.")
 
-    source_texts = [
-        str(text).strip()
-        for text in dataframe["text"].dropna().tolist()
-        if len(str(text).strip()) > 50
-    ][:MAX_SOURCE_TEXTS]
+    def _clean_source_text(s: str) -> str:
+        s = str(s).strip()
+        s = re.sub(r"<!--.*?-->", " ", s, flags=re.S)
+        s = re.sub(r"<[^>]+>", " ", s)
+        s = unicodedata.normalize("NFKC", s)
+        s = re.sub(r"\s+", " ", s)
+        return s.strip()
+
+    source_texts = []
+    for text in dataframe["text"].dropna().tolist():
+        cleaned = _clean_source_text(text)
+        if len(cleaned) > 60:
+            source_texts.append(cleaned)
+        if len(source_texts) >= MAX_SOURCE_TEXTS:
+            break
 
     if not source_texts:
         raise ValueError("No usable source texts were found in the dataset.")
@@ -180,18 +191,86 @@ def build_vectorstore() -> FAISS:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ".", "?", "!", ",", " "]
     )
+
+    def _is_mostly_devanagari(text: str) -> float:
+        if not text:
+            return 0.0
+        devanagari = re.findall(r"[\u0900-\u097F]", text)
+        return len(devanagari) / max(1, len(text))
+
+    def _is_noise(text: str) -> bool:
+        # obvious noise or spam patterns
+        low = text.lower()
+        if "read more" in low or "imagekhabar" in low or "--instant articles--" in low:
+            return True
+        if any(term in low for term in ["राजनीति", "government", "election", "congress", "bjp", "prime minister"]):
+            # political/news junk often dominates irrelevant articles
+            if len(text) < 220:
+                return True
+        if "http://" in low or "https://" in low or "www." in low:
+            return True
+        if "�" in text:
+            return True
+        if re.search(r"\{\{.*?\}\}", text):
+            return True
+        if re.search(r"(.)\1{7,}", text):
+            return True
+        if re.search(r"(\b\w+\b)(?:\s+\1){4,}", low):
+            return True
+        # extremely short
+        if len(text) < 40:
+            return True
+        # English-heavy or product spec english blocks
+        en_letters = re.findall(r"[A-Za-z]", text)
+        if len(en_letters) / max(1, len(text)) > 0.6:
+            return True
+        return False
+
+    def _quality_score(text: str) -> float:
+        score = 0.0
+        score += min(1.0, _is_mostly_devanagari(text) * 1.2)
+        # prefer medium-length informative chunks
+        l = len(text)
+        if 120 <= l <= 800:
+            score += 0.8
+        elif l < 120:
+            score += 0.2
+        else:
+            score += 0.5
+        # penalize noise
+        if _is_noise(text):
+            score -= 1.5
+        return round(max(0.0, score), 3)
 
     chunks = []
     metadatas = []
+    seen_hashes = set()
     for source_index, text in enumerate(source_texts):
         for chunk_index, chunk in enumerate(splitter.split_text(text)):
-            chunks.append(chunk)
+            cleaned = _clean_source_text(chunk)
+            if not cleaned:
+                continue
+            if _is_noise(cleaned):
+                continue
+            h = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()
+            if h in seen_hashes:
+                continue
+            seen_hashes.add(h)
+
+            qscore = _quality_score(cleaned)
+            # require a minimum quality
+            if qscore <= 0.4:
+                continue
+
+            chunks.append(cleaned)
             metadatas.append(
                 {
                     "source": "nepali_dataset.csv",
                     "source_index": source_index,
                     "chunk_index": chunk_index,
+                    "quality_score": qscore,
                 }
             )
 
@@ -212,33 +291,21 @@ def build_vectorstore() -> FAISS:
 
 
 def load_vectorstore() -> FAISS:
-    embeddings = make_embeddings()
     manifest = _load_manifest()
 
     if _json_store_exists() and _manifest_is_current(manifest):
-        try:
-            return _load_json_store(embeddings)
-        except Exception:
-            pass
+        embedding_start = time.perf_counter()
+        embeddings = make_embeddings()
+        embedding_load_time = time.perf_counter() - embedding_start
 
-    if _legacy_store_exists():
-        try:
-            legacy_db = FAISS.load_local(
-                str(VECTORSTORE_DIR),
-                embeddings,
-                allow_dangerous_deserialization=True,
-            )
-            _save_json_store(
-                legacy_db,
-                source_text_count=(
-                    manifest.get("source_text_count", len(legacy_db.index_to_docstore_id))
-                    if manifest
-                    else len(legacy_db.index_to_docstore_id)
-                ),
-                dataset_hash=_current_dataset_hash(),
-            )
-            return legacy_db
-        except Exception:
-            pass
+        vectorstore_start = time.perf_counter()
+        db = _load_json_store(embeddings)
+        vectorstore_load_time = time.perf_counter() - vectorstore_start
 
-    return build_vectorstore()
+        print(f"[startup] embedding load: {embedding_load_time:.2f}s")
+        print(f"[startup] vectorstore load: {vectorstore_load_time:.2f}s")
+        return db
+
+    raise FileNotFoundError(
+        "Vectorstore missing or invalid. Run ingest.py manually."
+    )
