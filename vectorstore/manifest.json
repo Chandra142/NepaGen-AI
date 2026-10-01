@@ -1,10 +1,11 @@
 {
   "schema_version": 2,
-  "embedding_model": "intfloat/multilingual-e5-base",
+  "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "embedding_dimension": 384,
   "chunk_size": 250,
   "chunk_overlap": 64,
-  "document_count": 4255,
-  "source_text_count": 2000,
-  "dataset_sha256": "9bce55b87159cacae6b0c9d19834092ad77b81171b5e321ee8beb17bd730f61c",
+  "document_count": 21376,
+  "source_text_count": 10000,
+  "dataset_sha256": "5f088918e45db37350339822d8cf73ab04ddb3f96265d953bc0c084cb66e5e74",
   "storage_format": "json-docstore"
 }

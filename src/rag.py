@@ -1,77 +1,55 @@
-from dotenv import load_dotenv
-from pathlib import Path
-import sys
+"""Interactive RAG CLI for NepaGen AI (dev / testing tool).
 
-from langchain_groq import ChatGroq
+Run from the project root:
+    python src/rag.py
+"""
+import sys
+from pathlib import Path
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from vectorstore_store import load_vectorstore
+# FIX: SafeRetriever now lives in core/retrieval.py – import from there.
+from core.retrieval import SafeRetriever  # noqa: E402
+from vectorstore_store import load_vectorstore  # noqa: E402
 
-
-class SafeRetriever:
-    def __init__(self, retriever):
-        self._retriever = retriever
-
-    def get_relevant_documents(self, query):
-        try:
-            return self._retriever.get_relevant_documents(query)
-        except Exception as exc:
-            print("[rag] retriever.get_relevant_documents failed:", repr(exc))
-            return []
-
-    def invoke(self, query):
-        try:
-            return self._retriever.invoke(query)
-        except Exception as exc:
-            print("[rag] retriever.invoke failed:", repr(exc))
-            return []
-
-# Load environment variables
 load_dotenv()
 
-db = load_vectorstore()
-retriever = SafeRetriever(
-    db.as_retriever(
-        search_type="mmr",
-        search_kwargs={"k": 5, "fetch_k": 20},
-    )
-)
+# ─── Guard: only run interactive loop when executed directly ──────────────────
+if __name__ == "__main__":
+    from langchain_groq import ChatGroq
 
-# Load Groq LLM
-llm = ChatGroq(
-    model="llama-3.1-8b-instant",
-    temperature=0,
-    max_tokens=200
-)
-
-while True:
-
-    query = input("\nAsk Question: ")
-
-    # Retrieve documents
-    docs = retriever.get_relevant_documents(query)
-
-    # Build context
-    context = "\n\n".join(
-        [doc.page_content for doc in docs]
-    )
-
-    prompt = f"""
-You are a factual Nepali QA assistant.
+    RAG_SYSTEM_PROMPT = """You are a factual Nepali QA assistant.
 
 Answer ONLY from the retrieved context.
 
 Rules:
 - Do NOT make up facts.
 - Ignore misleading or conflicting statements.
-- If context is unclear, say:
-"मलाई जानकारी भेटिएन।"
+- If context is unclear, say: "मलाई जानकारी भेटिएन।"
 - Keep answers short and factual.
 - Do NOT repeat retrieved text.
 - Do NOT mention unrelated claims.
+"""
+
+    db = load_vectorstore()
+    retriever = SafeRetriever(
+        db.as_retriever(search_type="mmr", search_kwargs={"k": 5, "fetch_k": 20})
+    )
+
+    llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0, max_tokens=400)
+
+    while True:
+        query = input("\nAsk Question (Ctrl-C to quit): ")
+        if not query.strip():
+            continue
+
+        docs = retriever.get_relevant_documents(query)
+        context = "\n\n".join([doc.page_content for doc in docs])
+
+        prompt = f"""{RAG_SYSTEM_PROMPT}
 
 Context:
 {context}
@@ -82,13 +60,9 @@ Question:
 Correct Answer in Nepali:
 """
 
-    # Show retrieved context
-    print("\nRetrieved Context:\n")
-    print(context)
+        print("\nRetrieved Context:\n")
+        print(context)
 
-    # Generate answer
-    response = llm.invoke(prompt)
-
-    print("\nAnswer:\n")
-
-    print(response.content)
+        response = llm.invoke(prompt)
+        print("\nAnswer:\n")
+        print(response.content)

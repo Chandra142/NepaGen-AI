@@ -9,7 +9,6 @@ from functools import lru_cache
 from pathlib import Path
 
 import faiss
-import faiss
 import pandas as pd
 from langchain_community.docstore.in_memory import InMemoryDocstore
 from langchain_community.vectorstores import FAISS
@@ -31,7 +30,10 @@ CHUNK_OVERLAP = 64
 
 class VectorstoreCompatibilityError(RuntimeError):
     pass
-MAX_SOURCE_TEXTS = 2000
+
+
+# FIX: raised from 2 000 → 10 000 so we actually index the full dataset
+MAX_SOURCE_TEXTS = 10000
 
 
 def _log_startup_paths() -> None:
@@ -124,11 +126,18 @@ def _manifest_status(manifest: dict | None) -> str:
     return "current"
 
 
-def _write_manifest(*, document_count: int, source_text_count: int, dataset_hash: str | None) -> None:
+def _write_manifest(
+    *,
+    document_count: int,
+    source_text_count: int,
+    dataset_hash: str | None,
+    embedding_dimension: int | None = None,
+) -> None:
     VECTORSTORE_DIR.mkdir(parents=True, exist_ok=True)
     manifest = {
         "schema_version": VECTORSTORE_SCHEMA_VERSION,
         "embedding_model": EMBEDDING_MODEL_NAME,
+        "embedding_dimension": embedding_dimension,
         "chunk_size": CHUNK_SIZE,
         "chunk_overlap": CHUNK_OVERLAP,
         "document_count": document_count,
@@ -139,7 +148,13 @@ def _write_manifest(*, document_count: int, source_text_count: int, dataset_hash
     MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _save_json_store(db: FAISS, *, source_text_count: int, dataset_hash: str | None) -> None:
+def _save_json_store(
+    db: FAISS,
+    *,
+    source_text_count: int,
+    dataset_hash: str | None,
+    embedding_dimension: int | None = None,
+) -> None:
     VECTORSTORE_DIR.mkdir(parents=True, exist_ok=True)
 
     faiss.write_index(db.index, str(INDEX_PATH))
@@ -173,6 +188,7 @@ def _save_json_store(db: FAISS, *, source_text_count: int, dataset_hash: str | N
         document_count=len(documents),
         source_text_count=source_text_count,
         dataset_hash=dataset_hash,
+        embedding_dimension=embedding_dimension,
     )
 
 
@@ -227,7 +243,18 @@ def _manifest_is_current(manifest: dict | None) -> bool:
     return True
 
 
-def build_vectorstore() -> FAISS:
+def build_vectorstore(clean_existing: bool = False) -> FAISS:  # FIX: clean_existing param added
+    """Build (or rebuild) the FAISS vectorstore from the dataset CSV.
+
+    Args:
+        clean_existing: If True, delete existing vectorstore files before rebuilding.
+    """
+    if clean_existing and VECTORSTORE_DIR.exists():
+        for stale_file in (INDEX_PATH, DOCSTORE_PATH, MANIFEST_PATH):
+            if stale_file.exists():
+                stale_file.unlink()
+        print("[build] existing vectorstore files removed")
+
     if not DATA_PATH.exists():
         raise FileNotFoundError(f"Dataset not found: {DATA_PATH}")
 
@@ -341,6 +368,7 @@ def build_vectorstore() -> FAISS:
             )
 
     embeddings = make_embeddings()
+    emb_dim = _embedding_dimension(embeddings)
     db = FAISS.from_texts(
         texts=chunks,
         embedding=embeddings,
@@ -351,6 +379,7 @@ def build_vectorstore() -> FAISS:
         db,
         source_text_count=len(source_texts),
         dataset_hash=_current_dataset_hash(),
+        embedding_dimension=emb_dim,
     )
 
     return db
