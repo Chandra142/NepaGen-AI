@@ -1,0 +1,1 @@
+# NepaGen AI – core package
