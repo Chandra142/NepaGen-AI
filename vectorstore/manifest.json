@@ -4,8 +4,8 @@
   "embedding_dimension": 384,
   "chunk_size": 250,
   "chunk_overlap": 64,
-  "document_count": 21376,
-  "source_text_count": 10000,
+  "document_count": 46079,
+  "source_text_count": 21270,
   "dataset_sha256": "5f088918e45db37350339822d8cf73ab04ddb3f96265d953bc0c084cb66e5e74",
   "storage_format": "json-docstore"
 }
