@@ -1,4 +1,4 @@
-"""Sidebar rendering for NepaGen AI."""
+"""Responsive sidebar navigation for NepaGen AI."""
 from __future__ import annotations
 
 import streamlit as st
@@ -6,64 +6,40 @@ import streamlit as st
 from core.chat_state import start_new_chat, set_active_chat
 
 
-def render_sidebar(logo_data_uri: str | None) -> None:
+def render_sidebar(logo_data_uri: str | None, vector_count: int = 0) -> None:  # noqa: ARG001
     with st.sidebar:
-        # ── Brand block ───────────────────────────────────────────────────────
-        if logo_data_uri:
-            st.markdown(
-                f"""
-                <div class="sidebar-brand">
-                    <img class="sidebar-logo" src="{logo_data_uri}" alt="NepaGen AI logo" />
-                    <div>
-                        <div class="sidebar-title">NepaGen AI</div>
-                        <div class="sidebar-subtitle">Grounded Nepali AI</div>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                """
-                <div class="sidebar-brand">
-                    <div style="font-size:1.6rem;line-height:1;">🇳🇵</div>
-                    <div>
-                        <div class="sidebar-title">NepaGen AI</div>
-                        <div class="sidebar-subtitle">Grounded Nepali AI</div>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+        st.markdown("### NepaGen AI")
+        st.caption("Grounded Nepali AI")
 
-        # ── New Chat button ───────────────────────────────────────────────────
-        st.markdown('<div class="new-chat-container">', unsafe_allow_html=True)
-        if st.button("＋ New Chat", use_container_width=True, key="sidebar-new-chat", type="secondary"):
-            start_new_chat()
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        # ── Chat history list ─────────────────────────────────────────────────
-        st.markdown('<div class="sidebar-label">TODAY</div>', unsafe_allow_html=True)
-        active_id = st.session_state.active_chat_id
-        for conv in reversed(st.session_state.conversations):
-            is_active = conv["id"] == active_id
-            label = f"💬 {conv['title']}"
-            if st.button(label, key=f"chat-nav-{conv['id']}", use_container_width=True, type="primary" if is_active else "secondary"):
-                set_active_chat(conv["id"])
-                st.rerun()
-
-        # ── What you can ask ──────────────────────────────────────────────────
-        st.markdown('<div class="sidebar-divider"></div>', unsafe_allow_html=True)
-        st.markdown('<div class="sidebar-label">What you can ask</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="sidebar-card">'
-            '<div class="sidebar-subtitle">'
-            "<ul style='padding-left: 1.2rem; margin: 0;'>"
-            "<li><strong>Nepali History & Geography:</strong> e.g., नेपालको इतिहास, राजधानी, भूगोल</li>"
-            "<li><strong>Culture & Traditions:</strong> e.g., नेपालका चाडपर्व, संस्कृति</li>"
-            "<li><strong>General Chat:</strong> e.g., नमस्ते, तपाईंलाई कस्तो छ?</li>"
-            "</ul>"
-            "</div></div>",
-            unsafe_allow_html=True,
+        st.button(
+            "New chat",
+            icon=":material/add:",
+            key="sidebar-new-chat",
+            width="stretch",
+            on_click=start_new_chat,
         )
+
+        st.caption("Conversations")
+        active_id = st.session_state.active_chat_id
+        for conversation in reversed(st.session_state.conversations):
+            st.button(
+                conversation["title"],
+                key=f"chat-nav-{conversation['id']}",
+                icon=":material/chat_bubble_outline:",
+                width="stretch",
+                type="primary" if conversation["id"] == active_id else "secondary",
+                on_click=set_active_chat,
+                args=(conversation["id"],),
+            )
+
+        if vector_count:
+            st.caption(f"{vector_count:,} indexed knowledge passages")
+
+        with st.expander("What you can ask", icon=":material/lightbulb:"):
+            st.markdown(
+                "- **History and geography:** नेपालको इतिहास, राजधानी, भूगोल\n"
+                "- **Culture and festivals:** नेपालका चाडपर्व, संस्कृति\n"
+                "- **General chat:** नमस्ते, तपाईंलाई कस्तो छ?\n\n"
+                "Answers stay grounded in the available Nepali text. "
+                "If a fact is unavailable, the app says so instead of guessing."
+            )

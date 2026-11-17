@@ -32,10 +32,6 @@ class VectorstoreCompatibilityError(RuntimeError):
     pass
 
 
-# FIX: raised from 2 000 → 10 000 so we actually index the full dataset
-MAX_SOURCE_TEXTS = 10000
-
-
 def _log_startup_paths() -> None:
     print("BASE_DIR:", BASE_DIR)
     print("CWD:", Path.cwd())
@@ -48,13 +44,6 @@ def _log_startup_paths() -> None:
     print("INDEX_PATH resolved:", INDEX_PATH.resolve())
     print("DOCSTORE_PATH resolved:", DOCSTORE_PATH.resolve())
     print("MANIFEST_PATH resolved:", MANIFEST_PATH.resolve())
-
-
-def _empty_vectorstore(embeddings: HuggingFaceEmbeddings) -> FAISS:
-    sample_vector = embeddings.embed_query("vectorstore-dimension-probe")
-    dimension = len(sample_vector)
-    index = faiss.IndexFlatL2(dimension)
-    return FAISS(embeddings, index, InMemoryDocstore({}), {})
 
 
 def _embedding_dimension(embeddings: HuggingFaceEmbeddings) -> int:
@@ -94,23 +83,32 @@ def _load_manifest() -> dict | None:
         return None
 
 
-def _manifest_status(manifest: dict | None) -> str:
-    if not manifest:
-        return "missing or unreadable"
-
+def _manifest_compatibility_error(manifest: dict) -> str | None:
+    """Return why a manifest cannot be used, or None when it is compatible."""
     if manifest.get("schema_version") != VECTORSTORE_SCHEMA_VERSION:
         return (
-            f"schema_version mismatch (found={manifest.get('schema_version')}, "
-            f"expected={VECTORSTORE_SCHEMA_VERSION})"
+            f"Vectorstore schema mismatch (found={manifest.get('schema_version')}, "
+            f"expected={VECTORSTORE_SCHEMA_VERSION})."
         )
 
     if manifest.get("embedding_model") != EMBEDDING_MODEL_NAME:
         return (
-            f"embedding_model mismatch (found={manifest.get('embedding_model')}, "
-            f"expected={EMBEDDING_MODEL_NAME})"
+            f"Vectorstore was built with a different embedding model "
+            f"(found={manifest.get('embedding_model')}, expected={EMBEDDING_MODEL_NAME})."
         )
 
-    current_dimension = _embedding_dimension(make_embeddings())
+    return None
+
+
+def _manifest_status(manifest: dict | None, embedding_dimension: int | None = None) -> str:
+    if not manifest:
+        return "missing or unreadable"
+
+    compatibility_error = _manifest_compatibility_error(manifest)
+    if compatibility_error:
+        return compatibility_error
+
+    current_dimension = embedding_dimension or _embedding_dimension(make_embeddings())
     stored_dimension = manifest.get("embedding_dimension")
     if stored_dimension not in (None, current_dimension):
         return (
@@ -275,8 +273,6 @@ def build_vectorstore(clean_existing: bool = False) -> FAISS:  # FIX: clean_exis
         cleaned = _clean_source_text(text)
         if len(cleaned) > 60:
             source_texts.append(cleaned)
-        if len(source_texts) >= MAX_SOURCE_TEXTS:
-            break
 
     if not source_texts:
         raise ValueError("No usable source texts were found in the dataset.")
@@ -386,10 +382,28 @@ def build_vectorstore(clean_existing: bool = False) -> FAISS:  # FIX: clean_exis
 
 
 def load_vectorstore() -> FAISS:
+    """Load the FAISS store, raising when it cannot serve grounded answers.
+
+    A missing or incompatible index must be a visible failure. Silently
+    returning an empty store made the app look healthy ("RAG Ready") while
+    every factual question answered "not found".
+    """
     _log_startup_paths()
     manifest = _load_manifest()
     print("[startup] manifest content:", manifest)
-    print("[startup] manifest status:", _manifest_status(manifest))
+
+    if not _json_store_exists():
+        raise VectorstoreCompatibilityError(
+            "Vectorstore files are missing (index.faiss, docstore.json or "
+            "manifest.json). Build the index with `python src/ingest.py` and redeploy."
+        )
+
+    if manifest:
+        compatibility_error = _manifest_compatibility_error(manifest)
+        if compatibility_error:
+            raise VectorstoreCompatibilityError(
+                f"{compatibility_error} Rebuild the vectorstore with `python src/ingest.py`."
+            )
 
     embedding_start = time.perf_counter()
     embeddings = make_embeddings()
@@ -397,39 +411,34 @@ def load_vectorstore() -> FAISS:
     embedding_dimension = _embedding_dimension(embeddings)
     print("[startup] embedding dimension:", embedding_dimension)
 
-    if _json_store_exists():
-        try:
-            vectorstore_start = time.perf_counter()
-            db = _load_json_store(embeddings)
-            vectorstore_load_time = time.perf_counter() - vectorstore_start
+    try:
+        vectorstore_start = time.perf_counter()
+        db = _load_json_store(embeddings)
+        vectorstore_load_time = time.perf_counter() - vectorstore_start
+    except Exception as exc:
+        raise VectorstoreCompatibilityError(
+            f"Vectorstore files could not be loaded ({exc!r}). "
+            "Rebuild the index with `python src/ingest.py`."
+        ) from exc
 
-            index_dimension = getattr(db.index, "d", None)
-            print("[startup] faiss index dimension:", index_dimension)
-            print("[startup] faiss index ntotal:", getattr(db.index, "ntotal", None))
+    index_dimension = getattr(db.index, "d", None)
+    print("[startup] faiss index dimension:", index_dimension)
+    print("[startup] faiss index ntotal:", getattr(db.index, "ntotal", None))
 
-            if index_dimension != embedding_dimension:
-                print(
-                    "[startup] vectorstore dimension mismatch:",
-                    f"index_d={index_dimension}",
-                    f"embedding_d={embedding_dimension}",
-                )
-                print("[startup] falling back to empty in-memory FAISS store")
-                return _empty_vectorstore(embeddings)
+    if index_dimension != embedding_dimension:
+        raise VectorstoreCompatibilityError(
+            f"Vectorstore dimension mismatch (index_d={index_dimension}, "
+            f"embedding_d={embedding_dimension}). "
+            "Rebuild the index with `python src/ingest.py`."
+        )
 
-            if _manifest_is_current(manifest):
-                print("[startup] manifest validation: current")
-            else:
-                print("[startup] manifest validation warning:", _manifest_status(manifest))
-                print("[startup] continuing because FAISS index and docstore loaded successfully")
+    if _manifest_is_current(manifest):
+        print("[startup] manifest validation: current")
+    else:
+        print("[startup] manifest validation warning:", _manifest_status(manifest, embedding_dimension))
+        print("[startup] continuing because FAISS index and docstore loaded successfully")
 
-            print(f"[startup] embedding load: {embedding_load_time:.2f}s")
-            print(f"[startup] vectorstore load: {vectorstore_load_time:.2f}s")
-            print(f"[startup] faiss ntotal: {db.index.ntotal}")
-            return db
-        except Exception as exc:
-            print("[startup] vectorstore load failed:", repr(exc))
-            print("[startup] falling back to empty in-memory FAISS store")
-            return _empty_vectorstore(embeddings)
-
-    print("[startup] vectorstore files missing; falling back to empty in-memory FAISS store")
-    return _empty_vectorstore(embeddings)
+    print(f"[startup] embedding load: {embedding_load_time:.2f}s")
+    print(f"[startup] vectorstore load: {vectorstore_load_time:.2f}s")
+    print(f"[startup] faiss ntotal: {db.index.ntotal}")
+    return db
