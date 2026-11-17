@@ -6,7 +6,6 @@ All business logic lives in core/, all rendering lives in ui/.
 Run:
     streamlit run app.py
 """
-import base64
 import os
 import time
 import traceback
@@ -41,17 +40,6 @@ BASE_DIR = Path(__file__).resolve().parent
 LOGO_PATH = BASE_DIR / "np rag logo.webp"
 
 
-def _load_logo_data_uri() -> str | None:
-    if not LOGO_PATH.exists():
-        return None
-    try:
-        encoded = base64.b64encode(LOGO_PATH.read_bytes()).decode("ascii")
-        return f"data:image/webp;base64,{encoded}"
-    except Exception as exc:
-        print("[startup] failed to load logo:", repr(exc))
-        return None
-
-
 st.set_page_config(
     page_title="NepaGen AI",
     page_icon=str(LOGO_PATH) if LOGO_PATH.exists() else "🇳🇵",
@@ -59,9 +47,9 @@ st.set_page_config(
 )
 inject_styles()
 
-LOGO_DATA_URI = _load_logo_data_uri()
-if LOGO_PATH.exists():
-    st.logo(str(LOGO_PATH), size="large")
+LOGO_IMAGE = str(LOGO_PATH) if LOGO_PATH.exists() else None
+if LOGO_IMAGE:
+    st.logo(LOGO_IMAGE, size="large")
 
 
 # ─── Model Loading (cached) ───────────────────────────────────────────────────
@@ -122,12 +110,12 @@ print(f"[startup] total: {time.perf_counter() - STARTUP_START:.2f}s")
 # ─── Layout ───────────────────────────────────────────────────────────────────
 
 init_chat_state()
-render_sidebar(LOGO_DATA_URI, vector_count)
+render_sidebar(vector_count)
 messages = sync_active_messages()
 active_chat = get_active_chat()
 
 render_brand_header(
-    LOGO_DATA_URI,
+    LOGO_IMAGE,
     bool(messages),
     active_chat["title"],
     rag_ready=vector_count > 0,
@@ -138,7 +126,7 @@ if not messages:
 
 for idx, msg in enumerate(messages):
     if msg["role"] == "assistant":
-        render_assistant_message(msg, idx, LOGO_DATA_URI)
+        render_assistant_message(msg, idx, LOGO_IMAGE)
     else:
         render_user_message(msg, idx)
 
@@ -171,7 +159,7 @@ if query:
     sources: list = []
     with st.chat_message(
         "assistant",
-        avatar=LOGO_DATA_URI or ":material/smart_toy:",
+        avatar=LOGO_IMAGE or ":material/smart_toy:",
         width="stretch",
     ):
         full_response = st.write_stream(
