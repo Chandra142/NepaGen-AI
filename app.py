@@ -9,6 +9,7 @@ Run:
 import base64
 import os
 import time
+import traceback
 from pathlib import Path
 
 import streamlit as st
@@ -28,7 +29,7 @@ from core.memory import remember_personal_statement
 from ui.styles import inject_styles
 from ui.sidebar import render_sidebar
 from ui.header import render_brand_header, render_empty_state
-from ui.messages import render_user_message, render_assistant_message
+from ui.messages import render_user_message, render_assistant_message, render_sources
 from ui.composer import render_composer
 
 # ─── Bootstrap ────────────────────────────────────────────────────────────────
@@ -51,15 +52,21 @@ def _load_logo_data_uri() -> str | None:
         return None
 
 
-st.set_page_config(page_title="NepaGen AI", page_icon="🇳🇵", layout="wide")
+st.set_page_config(
+    page_title="NepaGen AI",
+    page_icon=str(LOGO_PATH) if LOGO_PATH.exists() else "🇳🇵",
+    layout="centered",
+)
 inject_styles()
 
 LOGO_DATA_URI = _load_logo_data_uri()
+if LOGO_PATH.exists():
+    st.logo(str(LOGO_PATH), size="large")
 
 
 # ─── Model Loading (cached) ───────────────────────────────────────────────────
 
-@st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner="NepaGen AI तयार हुँदैछ…")
 def load_models():
     from langchain_groq import ChatGroq
 
@@ -78,22 +85,22 @@ def load_models():
     if not groq_key:
         groq_key = os.getenv("GROQ_API_KEY")
 
-    # FIX: max_tokens raised 200 → 400 for fuller answers
+    # Allow concise multi-sentence answers without cutting off lists.
     llm = ChatGroq(
         model="openai/gpt-oss-20b",
         temperature=0,
-        max_tokens=400,
+        max_tokens=600,
         api_key=groq_key,
     )
 
     t2 = time.perf_counter()
     print(f"[startup] vectorstore: {t1-t0:.2f}s | llm: {t2-t1:.2f}s")
     print(f"[startup] app revision: {APP_REVISION}")
-    return retriever, llm
+    return retriever, llm, db.index.ntotal
 
 
 try:
-    retriever, llm = load_models()
+    retriever, llm, vector_count = load_models()
 except VectorstoreCompatibilityError as exc:
     st.error(str(exc))
     st.warning("Please rebuild the vectorstore with the current embedding model and redeploy.")
@@ -106,7 +113,7 @@ except Exception as exc:
             "NepaGen AI could not load the application correctly. "
             "If this is a vectorstore issue, rebuild it with `python src/ingest.py`."
         )
-    st.exception(exc)
+    traceback.print_exc()
     st.stop()
 
 print(f"[startup] total: {time.perf_counter() - STARTUP_START:.2f}s")
@@ -115,11 +122,16 @@ print(f"[startup] total: {time.perf_counter() - STARTUP_START:.2f}s")
 # ─── Layout ───────────────────────────────────────────────────────────────────
 
 init_chat_state()
-render_sidebar(LOGO_DATA_URI)
+render_sidebar(LOGO_DATA_URI, vector_count)
 messages = sync_active_messages()
 active_chat = get_active_chat()
 
-render_brand_header(LOGO_DATA_URI, bool(messages), active_chat["title"])
+render_brand_header(
+    LOGO_DATA_URI,
+    bool(messages),
+    active_chat["title"],
+    rag_ready=vector_count > 0,
+)
 
 if not messages:
     render_empty_state()
@@ -153,16 +165,21 @@ if query:
     if category == "personal_statement":
         remember_personal_statement(query)
 
-    # ── Stream the assistant reply ────────────────────────────────────────────
-    full_response = ""
-    with st.chat_message("assistant", avatar=LOGO_DATA_URI):
-        stream_placeholder = st.empty()
-        for chunk in stream_reply(query, category, retriever, llm):
-            full_response += chunk
-            stream_placeholder.markdown(full_response + "▌")
-        
-        # Clear streaming UI and store the final response
-        stream_placeholder.markdown(full_response)
+    # Render the user's message immediately, then stream the grounded reply.
+    render_user_message({"role": "user", "content": query}, len(messages))
 
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
+    sources: list = []
+    with st.chat_message(
+        "assistant",
+        avatar=LOGO_DATA_URI or ":material/smart_toy:",
+        width="stretch",
+    ):
+        full_response = st.write_stream(
+            stream_reply(query, category, retriever, llm, on_sources=sources.extend)
+        ) or ""
+        render_sources(sources)
+
+    st.session_state.messages.append(
+        {"role": "assistant", "content": full_response, "sources": sources}
+    )
     st.rerun()

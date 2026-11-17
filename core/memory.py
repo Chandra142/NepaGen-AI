@@ -21,29 +21,60 @@ def normalized_compact_text(query: str) -> str:
 
 # ─── Profile Memory ───────────────────────────────────────────────────────────
 
-def remember_personal_statement(query: str) -> None:
-    """Parse a personal statement and persist any extractable info to the user profile."""
-    profile = st.session_state.setdefault("user_profile", {})
+# Only explicit "my name is ..." statements are treated as names. Patterns
+# such as "i am ..." describe the user ("i am a student") and must not be
+# stored as their name.
+_ENGLISH_NAME_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^my name is\s+(.+)$"),
+    re.compile(r"^i am called\s+(.+)$"),
+    re.compile(r"^call me\s+(.+)$"),
+)
+_NEPALI_NAME_PATTERN = re.compile(r"^मेरो नाम\s+(.+?)(?:\s+(?:हो|हुँ|छु))?\s*$")
+
+# Leading determiners signal a description, not a name.
+_NAME_STOPWORDS = {"a", "an", "the", "what", "who", "के", "कुन", "कस", "कहाँ", "कहिले"}
+
+
+def _clean_name(raw_name: str) -> str | None:
+    name = raw_name.strip(" .!?,।")
+    tokens = name.split()
+    if not name or len(name) > 40 or not 1 <= len(tokens) <= 4:
+        return None
+    if tokens[0].lower() in _NAME_STOPWORDS:
+        return None
+    return name if re.search(r"[ऀ-ॿ]", name) else name.title()
+
+
+def extract_person_name(query: str) -> str | None:
+    """Return an explicitly stated name, or None when the text is not one."""
     compact = normalized_compact_text(query)
 
-    en_match = re.match(r"^(?:i am|i'm|my name is)\s+(.+)$", compact, flags=re.IGNORECASE)
-    np_match = re.match(r"^(?:मेरो नाम|म)\s+(.+?)(?:\s+(?:हो|हुँ|छु))?\s*$", compact)
+    for pattern in _ENGLISH_NAME_PATTERNS:
+        match = pattern.match(compact)
+        if match:
+            return _clean_name(match.group(1))
 
-    if en_match:
-        name = en_match.group(1).strip(" .!?,")
-        if name:
-            profile["name"] = name.title()
-            return
+    match = _NEPALI_NAME_PATTERN.match(compact)
+    if match:
+        return _clean_name(match.group(1))
 
-    if np_match:
-        name = np_match.group(1).strip(" .!?,")
-        if name:
-            profile["name"] = name
+    return None
 
 
-def recent_chat_context(limit: int = 4) -> str:
-    """Return a formatted string of the most recent messages for prompt injection."""
-    recent = st.session_state.get("messages", [])[-limit:]
+def remember_personal_statement(query: str) -> None:
+    """Persist explicitly stated profile facts from a personal statement."""
+    profile = st.session_state.setdefault("user_profile", {})
+    name = extract_person_name(query)
+    if name:
+        profile["name"] = name
+
+
+def recent_chat_context(limit: int = 4, exclude_latest: bool = False) -> str:
+    """Return recent messages, optionally excluding the current user query."""
+    messages = st.session_state.get("messages", [])
+    if exclude_latest and messages and messages[-1].get("role") == "user":
+        messages = messages[:-1]
+    recent = messages[-limit:]
     if not recent:
         return ""
     lines = []
