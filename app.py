@@ -6,9 +6,9 @@ All business logic lives in core/, all rendering lives in ui/.
 Run:
     streamlit run app.py
 """
+import base64
 import os
 import time
-import traceback
 from pathlib import Path
 
 import streamlit as st
@@ -28,7 +28,7 @@ from core.memory import remember_personal_statement
 from ui.styles import inject_styles
 from ui.sidebar import render_sidebar
 from ui.header import render_brand_header, render_empty_state
-from ui.messages import render_user_message, render_assistant_message, render_sources
+from ui.messages import render_user_message, render_assistant_message
 from ui.composer import render_composer
 
 # ─── Bootstrap ────────────────────────────────────────────────────────────────
@@ -40,21 +40,26 @@ BASE_DIR = Path(__file__).resolve().parent
 LOGO_PATH = BASE_DIR / "np rag logo.webp"
 
 
-st.set_page_config(
-    page_title="NepaGen AI",
-    page_icon=str(LOGO_PATH) if LOGO_PATH.exists() else "🇳🇵",
-    layout="centered",
-)
+def _load_logo_data_uri() -> str | None:
+    if not LOGO_PATH.exists():
+        return None
+    try:
+        encoded = base64.b64encode(LOGO_PATH.read_bytes()).decode("ascii")
+        return f"data:image/webp;base64,{encoded}"
+    except Exception as exc:
+        print("[startup] failed to load logo:", repr(exc))
+        return None
+
+
+st.set_page_config(page_title="NepaGen AI", page_icon="🇳🇵", layout="wide")
 inject_styles()
 
-LOGO_IMAGE = str(LOGO_PATH) if LOGO_PATH.exists() else None
-if LOGO_IMAGE:
-    st.logo(LOGO_IMAGE, size="large")
+LOGO_DATA_URI = _load_logo_data_uri()
 
 
 # ─── Model Loading (cached) ───────────────────────────────────────────────────
 
-@st.cache_resource(show_spinner="NepaGen AI तयार हुँदैछ…")
+@st.cache_resource(show_spinner=False)
 def load_models():
     from langchain_groq import ChatGroq
 
@@ -73,22 +78,22 @@ def load_models():
     if not groq_key:
         groq_key = os.getenv("GROQ_API_KEY")
 
-    # Allow concise multi-sentence answers without cutting off lists.
+    # FIX: max_tokens raised 200 → 400 for fuller answers
     llm = ChatGroq(
         model="openai/gpt-oss-20b",
         temperature=0,
-        max_tokens=600,
+        max_tokens=400,
         api_key=groq_key,
     )
 
     t2 = time.perf_counter()
     print(f"[startup] vectorstore: {t1-t0:.2f}s | llm: {t2-t1:.2f}s")
     print(f"[startup] app revision: {APP_REVISION}")
-    return retriever, llm, db.index.ntotal
+    return retriever, llm
 
 
 try:
-    retriever, llm, vector_count = load_models()
+    retriever, llm = load_models()
 except VectorstoreCompatibilityError as exc:
     st.error(str(exc))
     st.warning("Please rebuild the vectorstore with the current embedding model and redeploy.")
@@ -101,7 +106,7 @@ except Exception as exc:
             "NepaGen AI could not load the application correctly. "
             "If this is a vectorstore issue, rebuild it with `python src/ingest.py`."
         )
-    traceback.print_exc()
+    st.exception(exc)
     st.stop()
 
 print(f"[startup] total: {time.perf_counter() - STARTUP_START:.2f}s")
@@ -110,23 +115,18 @@ print(f"[startup] total: {time.perf_counter() - STARTUP_START:.2f}s")
 # ─── Layout ───────────────────────────────────────────────────────────────────
 
 init_chat_state()
-render_sidebar(vector_count)
+render_sidebar(LOGO_DATA_URI)
 messages = sync_active_messages()
 active_chat = get_active_chat()
 
-render_brand_header(
-    LOGO_IMAGE,
-    bool(messages),
-    active_chat["title"],
-    rag_ready=vector_count > 0,
-)
+render_brand_header(LOGO_DATA_URI, bool(messages), active_chat["title"])
 
 if not messages:
     render_empty_state()
 
 for idx, msg in enumerate(messages):
     if msg["role"] == "assistant":
-        render_assistant_message(msg, idx, LOGO_IMAGE)
+        render_assistant_message(msg, idx, LOGO_DATA_URI)
     else:
         render_user_message(msg, idx)
 
@@ -153,21 +153,16 @@ if query:
     if category == "personal_statement":
         remember_personal_statement(query)
 
-    # Render the user's message immediately, then stream the grounded reply.
-    render_user_message({"role": "user", "content": query}, len(messages))
+    # ── Stream the assistant reply ────────────────────────────────────────────
+    full_response = ""
+    with st.chat_message("assistant", avatar=LOGO_DATA_URI):
+        stream_placeholder = st.empty()
+        for chunk in stream_reply(query, category, retriever, llm):
+            full_response += chunk
+            stream_placeholder.markdown(full_response + "▌")
+        
+        # Clear streaming UI and store the final response
+        stream_placeholder.markdown(full_response)
 
-    sources: list = []
-    with st.chat_message(
-        "assistant",
-        avatar=LOGO_IMAGE or ":material/smart_toy:",
-        width="stretch",
-    ):
-        full_response = st.write_stream(
-            stream_reply(query, category, retriever, llm, on_sources=sources.extend)
-        ) or ""
-        render_sources(sources)
-
-    st.session_state.messages.append(
-        {"role": "assistant", "content": full_response, "sources": sources}
-    )
+    st.session_state.messages.append({"role": "assistant", "content": full_response})
     st.rerun()
