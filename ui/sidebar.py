@@ -6,7 +6,7 @@ import streamlit as st
 from core.chat_state import start_new_chat, set_active_chat
 
 
-def render_sidebar(logo_data_uri: str | None, vector_count: int = 0) -> None:  # noqa: ARG001
+def render_sidebar(vector_count: int = 0) -> None:
     with st.sidebar:
         st.markdown("### NepaGen AI")
         st.caption("Grounded Nepali AI")

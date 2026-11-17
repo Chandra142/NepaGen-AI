@@ -7,7 +7,7 @@ from core.chat_state import queue_prompt
 
 
 def render_brand_header(
-    logo_data_uri: str | None,
+    logo_path: str | None,
     has_messages: bool,
     chat_title: str,
     rag_ready: bool = True,
@@ -25,8 +25,8 @@ def render_brand_header(
         return
 
     with st.container(key="hero", horizontal_alignment="center"):
-        if logo_data_uri:
-            st.image(logo_data_uri, width=84, alt="NepaGen AI logo")
+        if logo_path:
+            st.image(logo_path, width=84, alt="NepaGen AI logo")
         else:
             st.markdown("🇳🇵", text_alignment="center")
         st.title("NepaGen AI", text_alignment="center")
